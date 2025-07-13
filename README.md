@@ -1012,4 +1012,157 @@ A:
 **Q: How do you handle configuration changes properly?**
 A: Use ViewModel, save state in onSaveInstanceState, handle orientation changes, and use retained fragments when needed.
 
+
+# Coroutine Exception Handling Best Practices
+
+## Key Concepts
+
+### 1. **CoroutineExceptionHandler Interface**
+```kotlin
+interface CoroutineExceptionHandler : CoroutineContext.Element {
+    fun handleException(context: CoroutineContext, exception: Throwable)
+}
+```
+
+### 2. **When CoroutineExceptionHandler is Called**
+- Only for **uncaught exceptions** in **root coroutines**
+- Not called for exceptions in `async` blocks (use `await()` in try-catch)
+- Not called for exceptions caught by `try-catch`
+- Not called for `CancellationException`
+
+### 3. **Exception Propagation Rules**
+- **launch**: Exceptions propagate to parent and crash the application if uncaught
+- **async**: Exceptions are stored in the `Deferred` object and thrown when `await()` is called
+- **supervisorScope**: Child failures don't cancel siblings
+- **coroutineScope**: Any child failure cancels all siblings
+
+## Best Practices for Android Development
+
+### 1. **Use with ViewModelScope**
+```kotlin
+class MyViewModel : ViewModel() {
+    private val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+        // Handle exception (log, show error message, etc.)
+        handleError(exception)
+    }
+    
+    fun loadData() {
+        viewModelScope.launch(exceptionHandler) {
+            // Your coroutine code here
+        }
+    }
+}
+```
+
+### 2. **Combine with SupervisorJob**
+```kotlin
+val scope = CoroutineScope(
+    Dispatchers.Main + 
+    SupervisorJob() + 
+    exceptionHandler
+)
+```
+
+### 3. **Handle Different Exception Types**
+```kotlin
+private val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+    when (exception) {
+        is NetworkException -> handleNetworkError()
+        is ApiException -> handleApiError(exception.code)
+        is SecurityException -> handleSecurityError()
+        else -> handleGenericError(exception)
+    }
+}
+```
+
+### 4. **Use with Repository Pattern**
+```kotlin
+class UserRepository {
+    private val exceptionHandler = CoroutineExceptionHandler { _, exception ->
+        // Log error, send to analytics, etc.
+        crashlytics.recordException(exception)
+    }
+    
+    suspend fun getUser(id: String): Result<User> {
+        return withContext(Dispatchers.IO + exceptionHandler) {
+            try {
+                val user = api.getUser(id)
+                Result.success(user)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+}
+```
+
+### 5. **Flow Exception Handling**
+```kotlin
+fun getUserFlow(): Flow<User> {
+    return flow {
+        emit(fetchUser())
+    }.catch { exception ->
+        // Handle flow exceptions
+        emit(getDefaultUser())
+    }.flowOn(Dispatchers.IO)
+}
+```
+
+## Common Interview Questions & Answers
+
+### Q: "What's the difference between using try-catch and CoroutineExceptionHandler?"
+
+**Answer**: 
+- **try-catch**: Catches exceptions at the point where they occur, allows local handling
+- **CoroutineExceptionHandler**: Catches uncaught exceptions that would otherwise crash the app, acts as a global handler
+
+### Q: "When should you use supervisorScope vs coroutineScope?"
+
+**Answer**:
+- **supervisorScope**: When you want child coroutines to fail independently (e.g., loading multiple independent data sources)
+- **coroutineScope**: When you want all operations to succeed or fail together (e.g., a transaction-like operation)
+
+### Q: "How do you handle exceptions in async operations?"
+
+**Answer**:
+```kotlin
+try {
+    val result = async { networkCall() }.await()
+} catch (e: Exception) {
+    // Handle exception from async operation
+}
+```
+
+### Q: "What happens if you don't handle exceptions in coroutines?"
+
+**Answer**: 
+Unhandled exceptions will:
+1. Cancel the coroutine and its children
+2. Propagate to the parent coroutine
+3. Eventually crash the application if not caught
+
+## Testing Exception Handling
+
+```kotlin
+@Test
+fun `test exception handling`() = runTest {
+    var caughtException: Throwable? = null
+    
+    val handler = CoroutineExceptionHandler { _, exception ->
+        caughtException = exception
+    }
+    
+    launch(handler) {
+        throw RuntimeException("Test exception")
+    }
+    
+    assertThat(caughtException).isInstanceOf(RuntimeException::class.java)
+}
+```
+
+## Performance Considerations
+
+1. **Avoid creating handlers in loops**
+2. **Use singleton handlers when possible**
+   
 This comprehensive guide covers questions from junior to senior level Android development, providing a solid foundation for interview preparation and knowledge assessment.
